@@ -512,7 +512,10 @@ workflows:
       - bump-no-comparison-npm:
           filters: *filters
       - branch-lock-manager:
-          filters: *filters
+          filters:
+            tags:
+              only:
+                - /.*/
       # The orb must be re-packed for publishing, and saved to the workspace.
       - orb-tools/pack:
           filters: *release-filters
