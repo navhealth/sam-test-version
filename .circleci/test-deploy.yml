@@ -9,9 +9,9 @@ orbs:
   git: carejourney/git@1
   jq: circleci/jq@3
   gh: circleci/github-cli@2
-
+  versionv2: carejourney/versionv2@2
   # The orb definition is intentionally not included here. It will be injected into the pipeline.
-  versionv2: {}
+
 
 filters: &filters
   tags:
