@@ -1,0 +1,20 @@
+description: >
+  How to use this orb to manage repos that use bumpversion to manage the version for a given repo.
+  This will bump the version without comparing versions between the current branch and another branch.
+usage:
+  version: 2.1
+  orbs:
+    version: carejourney/versionv2@1
+
+  jobs:
+    bumpversion:
+      docker:
+        - image: cimg/python:3.8-node
+      steps:
+        - version/bump-using-bumpversion:
+            segment: patch
+
+  workflows:
+    version-bump:
+      jobs:
+        - bumpversion

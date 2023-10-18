@@ -1,0 +1,543 @@
+version: 2.1
+orbs:
+  # Your orb will be automatically injected here during the pipeline.
+  # Reference your orb's jobs and commands below as they will exist when built.
+  orb-tools: circleci/orb-tools@12.0
+  op: carejourney/one-password-public@2
+  circleci-cli: circleci/circleci-cli@0.1.9
+  test: carejourney/test@3
+  git: carejourney/git@1
+  jq: circleci/jq@3
+  gh: circleci/github-cli@2
+
+  # The orb definition is intentionally not included here. It will be injected into the pipeline.
+  versionv2: {}
+
+filters: &filters
+  tags:
+    only: /.*/
+
+# Filter for release tags.
+release-filters: &release-filters
+  branches:
+    ignore: /.*/
+  tags:
+    only: /^v[0-9]+\.[0-9]+\.[0-9]+$/
+
+executors:
+  cj_runners:
+    docker:
+      - image: cimg/base:stable
+    resource_class: carejourney/dev
+
+jobs:
+  branch-lock-manager:
+    docker:
+      - image: cimg/base:stable
+    resource_class: carejourney/dev
+    steps:
+      - when:
+          condition: << pipeline.git.tag >>
+          steps:
+            - checkout
+            - jq/install
+            - op/install_cli
+            - gh/install
+            - run:
+                name: "Set CIRCLE_BRANCH env var equal to master"
+                command: |
+                  CIRCLE_BRANCH=master
+            - run:
+                name: "[Setup] Create branch protection rule"
+                command: |
+                  NEW_PAYLOAD='{
+                    "required_status_checks": {
+                      "strict": true,
+                      "contexts": []
+                    },
+                    "enforce_admins": false,
+                    "required_pull_request_reviews": {
+                      "dismiss_stale_reviews": false,
+                      "require_code_owner_reviews": true,
+                      "require_last_push_approval": false,
+                      "required_approving_review_count": 2
+                    },
+                    "restrictions": {
+                      "users": [],
+                      "teams": [],
+                      "apps": []
+                    },
+                    "lock_branch": false
+                  }'
+
+                  echo "${NEW_PAYLOAD}" | gh api \
+                    repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection \
+                    -X PUT -H "Accept: application/vnd.github.v3+json" \
+                    --input -
+            - versionv2/lock-branch:
+                branch_pattern: ${CIRCLE_BRANCH}
+            - run:
+                name: "[TEST] Verify branch is locked"
+                command: |
+                  PAYLOAD=$(gh api \
+                    repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection \
+                    -H "Accept: application/vnd.github.v3+json")
+
+                  echo "${PAYLOAD}" | jq
+
+                  LOCK_STATE=$(echo "${PAYLOAD}" | jq -r .lock_branch.enabled)
+                  if [ "${LOCK_STATE}" != "true" ]; then
+                    echo "FAIL: Expected LOCK_STATE to be \"true\" but got \"${LOCK_STATE}\""
+                    exit 1
+                  fi
+            - versionv2/unlock-branch:
+                branch_pattern: ${CIRCLE_BRANCH}
+            - run:
+                name: "[TEST] Verify branch is unlocked"
+                command: |
+                  PAYLOAD=$(gh api \
+                    repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection \
+                    -H "Accept: application/vnd.github.v3+json")
+
+                  echo ${PAYLOAD} | jq
+
+                  LOCK_STATE=$(echo ${PAYLOAD} | jq -r .lock_branch.enabled)
+                  if [ "${LOCK_STATE}" != "false" ]; then
+                    echo "FAIL: Expected LOCK_STATE to be \"false\" but got \"${LOCK_STATE}\""
+                    exit 1
+                  fi
+            - run:
+                name: "[TEAR DOWN] Remove branch protection rule"
+                when: always
+                command: |
+                  gh api \
+                    --method DELETE \
+                    -H "Accept: application/vnd.github+json" \
+                    repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection
+
+  bump-master-less-than-dev-npm:
+    docker:
+      - image: cimg/python:3.8-node
+    resource_class: carejourney/dev
+    steps:
+      - checkout
+      - git/configure
+      - jq/install
+      - run:
+          name: "[Setup] Create package.json config file in compare branch"
+          command: |
+            git checkout -b comparebranch
+            echo ' {
+              "name": "version-orb-tests",
+              "version": "1.0.0",
+              "author": "",
+              "private": true,
+              "license": "UNLICENSED",
+              "scripts": {
+              "prebuild": "rimraf dist",
+              "build": "nest build",
+              "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+              "dev": "sls offline --prefix reports --noPrependStageInUrl",
+              "start": "nest start",
+              "start:dev": "nest start --watch",
+              "start:debug": "nest start --debug --watch",
+              "start:prod": "node dist/main",
+              "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+              "test": "jest",
+              "test:watch": "jest --watch",
+              "test:cov": "jest --coverage",
+              "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+              "test:e2e": "jest --config ./test/jest-e2e.json",
+              "test:e2e_local_sls": "E2E_BASE_URL=http://localhost:4005/reports/ ENVIRONMENT=local npm run test:e2e --detectOpenHandles"
+            }
+            }' > package.json
+            git add package.json
+            git commit -m "Add test package.json for comparebranch"
+            git checkout ${CIRCLE_BRANCH}
+            echo ${CIRCLE_BRANCH}
+      - run:
+          name: "[Setup] Create package.json config file in current branch"
+          command: |
+            echo ' {
+              "name": "version-orb-tests",
+              "version": "1.0.1",
+              "author": "",
+              "private": true,
+              "license": "UNLICENSED",
+              "scripts": {
+              "prebuild": "rimraf dist",
+              "build": "nest build",
+              "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+              "dev": "sls offline --prefix reports --noPrependStageInUrl",
+              "start": "nest start",
+              "start:dev": "nest start --watch",
+              "start:debug": "nest start --debug --watch",
+              "start:prod": "node dist/main",
+              "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+              "test": "jest",
+              "test:watch": "jest --watch",
+              "test:cov": "jest --coverage",
+              "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+              "test:e2e": "jest --config ./test/jest-e2e.json",
+              "test:e2e_local_sls": "E2E_BASE_URL=http://localhost:4005/reports/ ENVIRONMENT=local npm run test:e2e --detectOpenHandles"
+            }
+            }' > package.json
+            git add package.json
+            git commit -m "Add test package.json for current branch"
+      - versionv2/npm-increment-version-and-commit:
+          segment: patch
+          compare_branch: comparebranch
+          comparison_predicate: eq
+      - run:
+          name: Test FAILED
+          command: |
+                echo "This step should not execute because the job should have halted before this step."
+                exit 1
+
+  bump-master-greater-than-or-equal-dev-npm:
+    docker:
+      - image: cimg/python:3.8-node
+    resource_class: carejourney/dev
+    steps:
+      - checkout
+      - git/configure
+      - jq/install
+      - run:
+          name: "[Setup] Create package.json config file in comparebranch"
+          command: |
+            git checkout -b comparebranch
+            echo ' {
+              "name": "version-orb-tests",
+              "version": "1.0.0",
+              "author": "",
+              "private": true,
+              "license": "UNLICENSED",
+              "scripts": {
+              "prebuild": "rimraf dist",
+              "build": "nest build",
+              "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+              "dev": "sls offline --prefix reports --noPrependStageInUrl",
+              "start": "nest start",
+              "start:dev": "nest start --watch",
+              "start:debug": "nest start --debug --watch",
+              "start:prod": "node dist/main",
+              "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+              "test": "jest",
+              "test:watch": "jest --watch",
+              "test:cov": "jest --coverage",
+              "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+              "test:e2e": "jest --config ./test/jest-e2e.json",
+              "test:e2e_local_sls": "E2E_BASE_URL=http://localhost:4005/reports/ ENVIRONMENT=local npm run test:e2e --detectOpenHandles"
+            }
+            }' > package.json
+            git add package.json
+            git commit -m "Add test package.json for comparebranch"
+            git checkout ${CIRCLE_BRANCH}
+      - run:
+          name: "[Setup] Create package.json config file in current branch"
+          command: |
+            echo ' {
+              "name": "version-orb-tests",
+              "version": "1.0.0",
+              "author": "",
+              "private": true,
+              "license": "UNLICENSED",
+              "scripts": {
+              "prebuild": "rimraf dist",
+              "build": "nest build",
+              "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+              "dev": "sls offline --prefix reports --noPrependStageInUrl",
+              "start": "nest start",
+              "start:dev": "nest start --watch",
+              "start:debug": "nest start --debug --watch",
+              "start:prod": "node dist/main",
+              "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+              "test": "jest",
+              "test:watch": "jest --watch",
+              "test:cov": "jest --coverage",
+              "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+              "test:e2e": "jest --config ./test/jest-e2e.json",
+              "test:e2e_local_sls": "E2E_BASE_URL=http://localhost:4005/reports/ ENVIRONMENT=local npm run test:e2e --detectOpenHandles"
+            }
+            }' > package.json
+            git add package.json
+            git commit -m "Add test package.json for current branch"
+      - versionv2/npm-increment-version-and-commit:
+          segment: patch
+          compare_branch: comparebranch
+          comparison_predicate: eq
+      - run:
+          name: "[Test] Verify NPM version in current branch"
+          command: |
+            cat package.json
+            VERSION_IN_CURRENT_BRANCH=$(jq -r '.version' package.json)
+            if [ "${VERSION_IN_CURRENT_BRANCH}" == "1.0.1" ]; then
+                echo "PASSED: Expected 1.0.1. Got ${VERSION_IN_CURRENT_BRANCH}"
+            else
+                echo "FAILED: Expected 1.0.1. Got ${VERSION_IN_CURRENT_BRANCH}"
+                exit 1
+            fi
+
+  bump-no-comparison-npm:
+    docker:
+      - image: cimg/python:3.8-node
+    resource_class: carejourney/dev
+    steps:
+      - checkout
+      - git/configure
+      - run:
+          name: "[Setup] Create package.json config file in current branch"
+          command: |
+            echo ' {
+              "name": "version-orb-tests",
+              "version": "1.0.0",
+              "author": "",
+              "private": true,
+              "license": "UNLICENSED",
+              "scripts": {
+              "prebuild": "rimraf dist",
+              "build": "nest build",
+              "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+              "dev": "sls offline --prefix reports --noPrependStageInUrl",
+              "start": "nest start",
+              "start:dev": "nest start --watch",
+              "start:debug": "nest start --debug --watch",
+              "start:prod": "node dist/main",
+              "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+              "test": "jest",
+              "test:watch": "jest --watch",
+              "test:cov": "jest --coverage",
+              "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+              "test:e2e": "jest --config ./test/jest-e2e.json",
+              "test:e2e_local_sls": "E2E_BASE_URL=http://localhost:4005/reports/ ENVIRONMENT=local npm run test:e2e --detectOpenHandles"
+            }
+            }' > package.json
+            git add package.json
+            git commit -m "Add test package.json for current branch"
+      - versionv2/npm-increment-version-and-commit:
+          segment: major
+      - jq/install
+      - run:
+          name: "[Test] Verify version bumped in current branch"
+          command: |
+            cat package.json
+            VERSION=$(jq -r '.version' package.json)
+            echo "VERSION: ${VERSION}"
+            if [ "${VERSION}" == "2.0.0" ]; then
+              echo "PASSED"
+            else
+              echo "Expected version in package.json to be 2.0.0 but instead got ${VERSION}"
+              exit 1
+            fi
+
+  bump-no-comparison:
+    docker:
+      - image: cimg/python:3.8-node
+    resource_class: carejourney/dev
+    steps:
+      - run:
+          name: "[Setup] Create bumpversion config file in current branch"
+          command: |
+            echo "[bumpversion]
+            current_version = 1.0.0
+            parse = (?P<maj>\d+)\.(?P<min>\d+)\.(?P<bug>\d+)?
+            serialize =
+              {maj}.{min}.{bug}
+            commit = false
+            tag = False
+            message = [ci skip] {current_version} -> {new_version}" > .bumpversion.cfg
+      - versionv2/bump-using-bumpversion:
+          segment: min
+      - run:
+          name: "[Test] Verify version bumped in current branch"
+          command: |
+            cat .bumpversion.cfg
+            grep 1.1.0 .bumpversion.cfg
+
+  bump-master-equal-to-dev:
+    docker:
+      - image: cimg/python:3.8-node
+    resource_class: carejourney/dev
+    steps:
+      - checkout
+      - git/configure
+      - run:
+          name: "[Setup] Create bumpversion config file in compare branch"
+          command: |
+            git checkout -b comparebranch
+            echo "[bumpversion]
+            current_version = 1.0.0
+            parse = (?P<maj>\d+)\.(?P<min>\d+)\.(?P<bug>\d+)?
+            serialize =
+              {maj}.{min}.{bug}
+            commit = true
+            tag = False
+            message = [ci skip] {current_version} -> {new_version}" > .bumpversion.cfg
+            git add .bumpversion.cfg
+            git commit -m "Add test .bumpversion.cfg for compare branch"
+            git checkout ${CIRCLE_BRANCH}
+      - run:
+          name: "[Setup] Create bumpversion config file in current branch"
+          command: |
+            echo "[bumpversion]
+            current_version = 1.0.0
+            parse = (?P<maj>\d+)\.(?P<min>\d+)\.(?P<bug>\d+)?
+            serialize =
+              {maj}.{min}.{bug}
+            commit = false
+            tag = False
+            message = [ci skip] {current_version} -> {new_version}" > .bumpversion.cfg
+            git add .bumpversion.cfg
+            git commit -m "Add test .bumpversion.cfg for current branch"
+      - versionv2/bump-using-bumpversion:
+          segment: bug
+          compare_branch: comparebranch
+          comparison_predicate: eq
+      - run:
+          name: "[Test] Verify version bumped in current branch"
+          command: |
+            cat .bumpversion.cfg
+            grep 1.0.1 .bumpversion.cfg
+
+  bump-master-less-than-dev:
+    docker:
+      - image: cimg/python:3.8-node
+    resource_class: carejourney/dev
+    steps:
+      - checkout
+      - git/configure
+      - run:
+          name: "[Setup] Create bumpversion config file in compare branch"
+          command: |
+            git checkout -b comparebranch
+            echo "[bumpversion]
+            current_version = 1.0.0
+            parse = (?P<maj>\d+)\.(?P<min>\d+)\.(?P<bug>\d+)?
+            serialize =
+              {maj}.{min}.{bug}
+            commit = true
+            tag = False
+            message = [ci skip] {current_version} -> {new_version}" > .bumpversion.cfg
+            git add .bumpversion.cfg
+            git commit -m "Add test .bumpversion.cfg for compare branch"
+            git checkout ${CIRCLE_BRANCH}
+      - run:
+          name: "[Setup] Create bumpversion config file in current branch"
+          command: |
+            echo "[bumpversion]
+            current_version = 1.0.1
+            parse = (?P<maj>\d+)\.(?P<min>\d+)\.(?P<bug>\d+)?
+            serialize =
+              {maj}.{min}.{bug}
+            commit = false
+            tag = False
+            message = [ci skip] {current_version} -> {new_version}" > .bumpversion.cfg
+            git add .bumpversion.cfg
+            git commit -m "Add test .bumpversion.cfg for current branch"
+      - versionv2/bump-using-bumpversion:
+          segment: bug
+          compare_branch: comparebranch
+          comparison_predicate: eq
+      - run:
+          name: "[Test] Verify version bumped in current branch"
+          command: |
+            cat .bumpversion.cfg
+            grep 1.0.1 .bumpversion.cfg
+
+  extract-repo-version:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run:
+          name: "[Setup] Create bumpversion config file"
+          command: |
+            echo "[bumpversion]
+            current_version = 1.0.0
+            parse = (?P<maj>\d+)\.(?P<min>\d+)\.(?P<bug>\d+)?
+            serialize =
+              {maj}.{min}.{bug}
+            commit = false
+            tag = False
+            message = [ci skip] {current_version} -> {new_version}" > .bumpversion.cfg
+      - versionv2/get-repo-version
+      - run:
+          name: "[Test] Verify environment variable REPO_VERSION equals file version"
+          command: |
+            if [ $REPO_VERSION == "1.0.0" ]
+            then
+              echo "Version ID are equal"
+            else
+              echo "Version ID are not equal"
+              exit 1
+            fi
+
+workflows:
+  Run pre-commit hooks:
+    jobs:
+      - test/pre-commit
+
+  test-deploy:
+    jobs:
+      - bump-master-less-than-dev-npm:
+          filters:
+            branches:
+              only:
+                - master
+                - /SYS-.*/
+            tags:
+              ignore: /.*/
+      - bump-master-greater-than-or-equal-dev-npm:
+          filters:
+            branches:
+              only:
+                - master
+                - /SYS-.*/
+            tags:
+              ignore: /.*/
+      - bump-master-equal-to-dev:
+          filters: *filters
+      - bump-no-comparison:
+          filters: *filters
+      - bump-master-less-than-dev:
+          filters:
+            branches:
+              only:
+                - master
+                - /SYS-.*/
+            tags:
+              ignore: /.*/
+      - extract-repo-version:
+          filters: *filters
+      - bump-no-comparison-npm:
+          filters: *filters
+      - branch-lock-manager:
+          filters: *filters
+      # The orb must be re-packed for publishing, and saved to the workspace.
+      - orb-tools/pack:
+          filters: *release-filters
+      - orb-tools/publish:
+          orb_name: carejourney/one-password
+          vcs_type: << pipeline.project.type >>
+          executor: cj_runners
+          pub_type: production
+          # Ensure this job requires all test jobs and the pack job.
+          requires:
+            - orb-tools/pack
+            - bump-master-less-than-dev-npm
+            - bump-master-greater-than-or-equal-dev-npm
+            - bump-master-equal-to-dev
+            - bump-no-comparison
+            - bump-master-less-than-dev
+            - extract-repo-version
+            - bump-no-comparison-npm
+            - branch-lock-manager
+          pre-steps:
+            - circleci-cli/install
+            - op/export:
+                secret-reference: "op://CircleCITestCred/hzaloaglmuz7zramvjin2vpmxi/Other Fields/CIRCLE_TOKEN"
+                var-name: CIRCLE_TOKEN
+            - op/export:
+                secret-reference: "op://CircleCITestCred/hzaloaglmuz7zramvjin2vpmxi/Other Fields/GITHUB_TOKEN"
+                var-name: GITHUB_TOKEN
+          filters: *release-filters

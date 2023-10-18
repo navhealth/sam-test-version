@@ -1,0 +1,74 @@
+description: >
+  Use `npm` to bump a segment version, commit the change, and push to github.
+
+parameters:
+  segment:
+    description: The segment of the version string to bump.
+    default: patch
+    type: enum
+    enum:
+      - prerelease
+      - patch
+      - minor
+      - major
+  branch:
+    description: Name of the branch to push after bumping. Usually "development" or "master:development".
+    type: string
+  attach_workspace:
+    description: Whether a workspace should be attached. Most of the time this should be true since we need code to act upon.
+    default: true
+    type: boolean
+  persist_workspace:
+    description: Whether to persist changes to the workspace.
+    default: true
+    type: boolean
+  node_version:
+    description: The version of node to run this job within. See https://hub.docker.com/r/cimg/node for valid version tags.
+    type: string
+    default: 14.17.2
+  compare_branch:
+    description: The other branch to compare the current branch's version with. This should most likely be "master".
+    default: master
+    type: string
+  comparison_predicate:
+    description: |
+      Perform the bump if the version in the current branch is << comparison_predicate >> the branch specified in the "compare_branch" parameter.
+      Provide an empty string (ie "") to bump the version without comparing versions.
+    type: enum
+    default: ""
+    enum:
+      - ""
+      - eq
+      - ge
+      - gt
+      - le
+      - lt
+
+executor:
+  name: node/default
+  tag: << parameters.node_version >>
+resource_class: carejourney/dev
+
+steps:
+  - when:
+      condition: << parameters.attach_workspace >>
+      steps:
+        - attach_workspace:
+            name: Restore environment
+            at: /home/circleci
+  - git/configure
+  - stage-npm-packages
+  - npm-increment-version-and-commit:
+      segment: << parameters.segment >>
+  - git/push:
+      branch: << parameters.branch >>
+  - git/commit-status
+  - when:
+      condition: << parameters.persist_workspace >>
+      steps:
+        - persist_to_workspace:
+            name: Save environment
+            root: /home/circleci/
+            paths:
+              - project
+              - .npmrc

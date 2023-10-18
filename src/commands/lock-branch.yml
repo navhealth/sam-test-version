@@ -1,0 +1,23 @@
+description: >
+  Locks a given branch by setting the "lock branch" feature of an existing matching branch protection rule.
+  This effectively prevents users from merging pull requests in to a given branch. This is useful during the version bumping process.
+  See github documentation for more information.
+  https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/defining-the-mergeability-of-pull-requests/managing-a-branch-protection-rule#creating-a-branch-protection-rule
+parameters:
+  branch_pattern:
+    type: string
+    default: development
+    description: |
+      Branch name pattern to use to match the protection rule.
+steps:
+  - jq/install
+  - op/install_cli
+  - gh/install
+  - run:
+      shell: op run -- /bin/bash
+      environment:
+        PARAM_LOCK: "true"
+        PARAM_BRANCH_PATTERN: <<parameters.branch_pattern>>
+        GITHUB_TOKEN: "op://CircleCITestCred/hzaloaglmuz7zramvjin2vpmxi/Other Fields/GITHUB_TOKEN"
+      name: Lock branch - <<parameters.branch_pattern>>
+      command: <<include(scripts/branch-lock-manager.sh)>>

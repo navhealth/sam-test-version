@@ -1,0 +1,16 @@
+description: >
+  Unlock a specific branch using Github branch protection rules.
+parameters:
+  branch_pattern:
+    type: string
+    default: development
+    description: |
+      Branch name pattern to use to match the protection rule.
+
+docker:
+  - image: cimg/base:stable
+resource_class: carejourney/dev
+
+steps:
+  - unlock-branch:
+      branch_pattern: << parameters.branch_pattern >>

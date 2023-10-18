@@ -1,0 +1,41 @@
+description: >
+  An example of how to use this orb within the context of CareJourney's environment.
+usage:
+  version: 2.1
+  orbs:
+    version: carejourney/versionv2@1
+
+  workflows:
+    npm-workflow:
+      jobs:
+        - other_orb/other_job
+        - version/npm-bump-prod:  ## Only run this for the production branch.
+            requires:
+              - other_orb/other_job
+            filter:
+              branches:
+                only:
+                  - master
+        - version/npm-bump-dev:
+            requires:
+              - version/npm-bump-prod
+              - other_orb/other_job
+              # See https://circleci.com/docs/2.0/configuration-reference/#requires for details
+            filter:
+              branches:
+                only:
+                  - development
+        - version/npm-bump-and-push:
+            segment: prerelease
+            branch: development
+            filter:
+              branches:
+                only:
+                  - development
+        - version/npm-bump-and-push:
+            segment: patch
+            branch: master:development
+            filter:
+              branches:
+                only:
+                  - master

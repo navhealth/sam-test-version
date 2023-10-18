@@ -1,0 +1,6 @@
+description: >
+  Stage package*.json files to the git repo
+steps:
+  - run:
+      name: Stage Package JSONs
+      command: <<include(scripts/stage-npm-packages.sh)>>
