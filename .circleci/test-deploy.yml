@@ -9,9 +9,9 @@ orbs:
   git: carejourney/git@1
   jq: circleci/jq@3
   gh: circleci/github-cli@2
-
+  versionv2: carejourney/versionv2@2
   # The orb definition is intentionally not included here. It will be injected into the pipeline.
-  versionv2: {}
+
 
 filters: &filters
   tags:
@@ -39,81 +39,81 @@ jobs:
       - when:
           condition: << pipeline.git.tag >>
           steps:
-            - checkout
-            - jq/install
-            - op/install_cli
-            - gh/install
             - run:
                 name: "Set CIRCLE_BRANCH env var equal to master"
                 command: |
                   CIRCLE_BRANCH=master
-            - run:
-                name: "[Setup] Create branch protection rule"
-                command: |
-                  NEW_PAYLOAD='{
-                    "required_status_checks": {
-                      "strict": true,
-                      "contexts": []
-                    },
-                    "enforce_admins": false,
-                    "required_pull_request_reviews": {
-                      "dismiss_stale_reviews": false,
-                      "require_code_owner_reviews": true,
-                      "require_last_push_approval": false,
-                      "required_approving_review_count": 2
-                    },
-                    "restrictions": {
-                      "users": [],
-                      "teams": [],
-                      "apps": []
-                    },
-                    "lock_branch": false
-                  }'
+      - checkout
+      - jq/install
+      - op/install_cli
+      - gh/install
+      - run:
+          name: "[Setup] Create branch protection rule"
+          command: |
+            NEW_PAYLOAD='{
+              "required_status_checks": {
+                "strict": true,
+                "contexts": []
+              },
+              "enforce_admins": false,
+              "required_pull_request_reviews": {
+                "dismiss_stale_reviews": false,
+                "require_code_owner_reviews": true,
+                "require_last_push_approval": false,
+                "required_approving_review_count": 2
+              },
+              "restrictions": {
+                "users": [],
+                "teams": [],
+                "apps": []
+              },
+              "lock_branch": false
+            }'
 
-                  echo "${NEW_PAYLOAD}" | gh api \
-                    repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection \
-                    -X PUT -H "Accept: application/vnd.github.v3+json" \
-                    --input -
-            - versionv2/lock-branch:
-                branch_pattern: ${CIRCLE_BRANCH}
-            - run:
-                name: "[TEST] Verify branch is locked"
-                command: |
-                  PAYLOAD=$(gh api \
-                    repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection \
-                    -H "Accept: application/vnd.github.v3+json")
+            echo "${NEW_PAYLOAD}" | gh api \
+              repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection \
+              -X PUT -H "Accept: application/vnd.github.v3+json" \
+              --input -
+      - versionv2/lock-branch:
+          branch_pattern: ${CIRCLE_BRANCH}
+      - run:
+          name: "[TEST] Verify branch is locked"
+          command: |
+            PAYLOAD=$(gh api \
+              repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection \
+              -H "Accept: application/vnd.github.v3+json")
 
-                  echo "${PAYLOAD}" | jq
+            echo "${PAYLOAD}" | jq
 
-                  LOCK_STATE=$(echo "${PAYLOAD}" | jq -r .lock_branch.enabled)
-                  if [ "${LOCK_STATE}" != "true" ]; then
-                    echo "FAIL: Expected LOCK_STATE to be \"true\" but got \"${LOCK_STATE}\""
-                    exit 1
-                  fi
-            - versionv2/unlock-branch:
-                branch_pattern: ${CIRCLE_BRANCH}
-            - run:
-                name: "[TEST] Verify branch is unlocked"
-                command: |
-                  PAYLOAD=$(gh api \
-                    repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection \
-                    -H "Accept: application/vnd.github.v3+json")
+            LOCK_STATE=$(echo "${PAYLOAD}" | jq -r .lock_branch.enabled)
+            if [ "${LOCK_STATE}" != "true" ]; then
+              echo "FAIL: Expected LOCK_STATE to be \"true\" but got \"${LOCK_STATE}\""
+              exit 1
+            fi
+      - versionv2/unlock-branch:
+          branch_pattern: ${CIRCLE_BRANCH}
+      - run:
+          name: "[TEST] Verify branch is unlocked"
+          command: |
+            PAYLOAD=$(gh api \
+              repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection \
+              -H "Accept: application/vnd.github.v3+json")
 
-                  echo ${PAYLOAD} | jq
+            echo ${PAYLOAD} | jq
 
-                  LOCK_STATE=$(echo ${PAYLOAD} | jq -r .lock_branch.enabled)
-                  if [ "${LOCK_STATE}" != "false" ]; then
-                    echo "FAIL: Expected LOCK_STATE to be \"false\" but got \"${LOCK_STATE}\""
-                    exit 1
-                  fi
-            - run:
-                name: "[TEAR DOWN] Remove branch protection rule"
-                when: always
-                command: |
-                  gh api \
-                    --method DELETE \
-                    -H "Accept: application/vnd.github+json" \
-                    repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection
+            LOCK_STATE=$(echo ${PAYLOAD} | jq -r .lock_branch.enabled)
+            if [ "${LOCK_STATE}" != "false" ]; then
+              echo "FAIL: Expected LOCK_STATE to be \"false\" but got \"${LOCK_STATE}\""
+              exit 1
+            fi
+      - run:
+          name: "[TEAR DOWN] Remove branch protection rule"
+          when: always
+          command: |
+            gh api \
+              --method DELETE \
+              -H "Accept: application/vnd.github+json" \
+              repos/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}/branches/${CIRCLE_BRANCH}/protection
 
   bump-master-less-than-dev-npm:
     docker:
@@ -512,7 +512,10 @@ workflows:
       - bump-no-comparison-npm:
           filters: *filters
       - branch-lock-manager:
-          filters: *filters
+          filters:
+            tags:
+              only:
+                - /.*/
       # The orb must be re-packed for publishing, and saved to the workspace.
       - orb-tools/pack:
           filters: *release-filters
