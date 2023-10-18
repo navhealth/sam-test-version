@@ -1,0 +1,10 @@
+description: >
+  This command orb uses the rememborb to get the version of the bumpversion file and assigns it to env_variable REPO_VERSION to be usable in other jobs
+steps:
+  - checkout
+  - rememborb/remember:
+      env_var: REPO_VERSION
+      value: $(grep 'current_version =' .bumpversion.cfg | awk '{print $NF}')
+  - run:
+      name: Show bump version id
+      command: echo ${REPO_VERSION}

@@ -1,0 +1,54 @@
+version: 2.1
+setup: true
+
+orbs:
+  # Replace this with your own!
+  orb-tools: circleci/orb-tools@12
+  shellcheck: circleci/shellcheck@3
+  circleci-cli: circleci/circleci-cli@0.1.9
+  op: carejourney/one-password-public@2
+
+filters: &filters
+  tags:
+    only: /.*/
+
+executors:
+  cj_runners:
+    docker:
+      - image: cimg/base:stable
+    resource_class: carejourney/dev
+
+workflows:
+  lint-pack:
+    jobs:
+      - orb-tools/lint:
+          filters: *filters
+      - orb-tools/pack:
+          filters: *filters
+      - orb-tools/review:
+          exclude: RC006,RC007,RC009,RC010,RC005
+          filters: *filters
+      - shellcheck/check:
+          exclude: SC2148,SC2038,SC2086,SC2002,SC2016
+          filters: *filters
+      - orb-tools/publish:
+          orb_name: carejourney/one-password
+          vcs_type: << pipeline.project.type >>
+          executor: cj_runners
+          requires: [orb-tools/lint, orb-tools/review, orb-tools/pack, shellcheck/check]
+          pre-steps:
+            - circleci-cli/install
+            - op/export:
+                secret-reference: "op://CircleCITestCred/hzaloaglmuz7zramvjin2vpmxi/Other Fields/CIRCLE_TOKEN"
+                var-name: CIRCLE_TOKEN
+            - op/export:
+                secret-reference: "op://CircleCITestCred/hzaloaglmuz7zramvjin2vpmxi/Other Fields/GITHUB_TOKEN"
+                var-name: GITHUB_TOKEN
+          filters: *filters
+      # Triggers the next workflow in the Orb Development Kit.
+      - orb-tools/continue:
+          pipeline_number: << pipeline.number >>
+          vcs_type: << pipeline.project.type >>
+          orb_name: one-password
+          requires: [orb-tools/lint, orb-tools/pack, orb-tools/review, shellcheck/check]
+          filters: *filters

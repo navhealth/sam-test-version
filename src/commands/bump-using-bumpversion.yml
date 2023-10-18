@@ -1,0 +1,117 @@
+description: >
+  Bump the selected segment of a projects version
+parameters:
+  segment:
+    type: enum
+    default: patch
+    enum:
+      - patch
+      - minor
+      - min
+      - major
+      - maj
+      - bug
+    description: |
+      Segment of the version string to bump.
+      Note, some repos use the term "bug" instead of "patch". Check the .bumpversion.cfg in the repo to know which term to use.
+  compare_branch:
+    description: The other branch to compare the current branch's version with. This should most likely be "master".
+    default: master
+    type: string
+  comparison_predicate:
+    description: |
+      Perform the bump if the version in the current branch is << comparison_predicate >> the branch specified in the "compare_branch" parameter.
+      Provide an empty string (ie "") to bump the version without comparing versions.
+
+      See https://github.com/jceb/semver-compare-cli#comparison-with-predicate for details.
+    type: enum
+    default: ""
+    enum:
+      - ""
+      - eq
+      - ge
+      - gt
+      - le
+      - lt
+  ignore_comparison_failure:
+    type: boolean
+    default: true
+    description: If true, do not fail the pipeline if the version comparison fails.
+  skip_matching_branch:
+    type: boolean
+    default: true
+    description: |
+      Skip version bumping if the `compare_branch` is the same as this current branch.
+      If this parameter is "false", the pipeline will terminate with an error.
+
+steps:
+  - when:
+      condition: << parameters.skip_matching_branch >>
+      steps:
+        - run:
+            name: Verify branch names
+            command: |
+              if [[ "${CIRCLE_BRANCH}" == "<< parameters.compare_branch >>" ]]; then
+                echo "Branches match. Skipping version bump."
+                circleci-agent step halt
+              fi
+  - when:
+      condition:
+        not: << parameters.skip_matching_branch >>
+      steps:
+        - run:
+            name: Verify branch names
+            command: |
+              if [[ "${CIRCLE_BRANCH}" == "<< parameters.compare_branch >>" ]]; then
+                echo "Branches match. Stopping pipeline."
+                exit 1
+              fi
+
+  - when:
+      condition: << parameters.comparison_predicate >>
+      steps:
+        - run:
+            name: Get verison from << parameters.compare_branch >>
+            command: |
+              mkdir -p /tmp/<< parameters.compare_branch >>_branch
+              cp -r . /tmp/<< parameters.compare_branch >>_branch
+              pushd /tmp/<< parameters.compare_branch >>_branch
+              git checkout << parameters.compare_branch >>
+
+              if [ ! -f .bumpversion.cfg ]; then
+                echo "Bump version configuration does not exist. Skipping bump."
+                circleci-agent step halt
+                exit 0
+              fi
+
+              VERSION_IN_<< parameters.compare_branch >>=$(python -c "from configparser import ConfigParser; parser = ConfigParser(); parser.read('.bumpversion.cfg'); print(parser.get('bumpversion', 'current_version'))")
+              echo "Found this verison in the << parameters.compare_branch >> branch: ${VERSION_IN_<< parameters.compare_branch >>}"
+              echo "export VERSION_IN_<< parameters.compare_branch >>=${VERSION_IN_<< parameters.compare_branch >>}" >> $BASH_ENV
+        - run:
+            name: Get verison from current branch
+            command: |
+              VERSION_IN_CURRENT_BRANCH=$(python -c "from configparser import ConfigParser; parser = ConfigParser(); parser.read('.bumpversion.cfg'); print(parser.get('bumpversion', 'current_version'))")
+              echo "Found this verison in the ${CIRCLE_BRANCH} branch: ${VERSION_IN_CURRENT_BRANCH}"
+              echo "export VERSION_IN_CURRENT_BRANCH=${VERSION_IN_CURRENT_BRANCH}" >> $BASH_ENV
+        - npm/configure
+        # We should use this when it's released: https://python-semver.readthedocs.io/en/latest/index.html
+        # Using this project for now https://github.com/jceb/semver-compare-cli
+        - run:
+            name: Install version comparison tool
+            command: |
+              npm i semver-compare-cli
+              echo 'export PATH=node_modules/.bin:${PATH}' >> $BASH_ENV
+              export PATH=node_modules/.bin:${PATH}
+              semver-compare --version
+        - run:
+            name: Compare versions
+            command: |
+              semver-compare ${VERSION_IN_CURRENT_BRANCH} << parameters.comparison_predicate >> ${VERSION_IN_<< parameters.compare_branch >>} <<# parameters.ignore_comparison_failure >> || circleci-agent step halt <</ parameters.ignore_comparison_failure >>
+
+  - pip-config/configure
+  - run:
+      name: Install bumpversion
+      command: pip install bumpversion
+  - run:
+      name: Bump << parameters.segment >> segment
+      command: bumpversion << parameters.segment >>

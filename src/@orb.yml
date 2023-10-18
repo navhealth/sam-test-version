@@ -1,0 +1,22 @@
+version: 2.1
+
+description: >
+  Orb to handle version bumping for CareJourney projects.
+# What will your orb allow users to accomplish?
+# Descriptions should be short, simple, and informative.
+
+# This information will be displayed in the orb registry and is not mandatory.
+display:
+  home_url: "https://www.website.com/docs"
+  source_url: "https://www.github.com/EXAMPLE_ORG/EXAMPLE_PROJECT"
+
+# If your orb requires other orbs, you can import them like this. Otherwise remove the "orbs" stanza.
+orbs:
+  node: circleci/node@4
+  pip-config: carejourney/pip-config@2
+  npm: carejourney/npm-config@3
+  gh: circleci/github-cli@2
+  rememborb: circleci/rememborb@0
+  jq: circleci/jq@3
+  git: carejourney/git@1
+  op: carejourney/one-password-public@2

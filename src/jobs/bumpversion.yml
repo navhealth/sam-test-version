@@ -1,0 +1,85 @@
+description: >
+  Use `bumpversion` to bump a segment version, commit the change, and push to github.
+
+parameters:
+  segment:
+    description: |
+      Segment of the version string to bump.
+      Note, some repos use the term "bug" instead of "patch". Check the .bumpversion.cfg in the repo to know which term to use.
+    default: patch
+    type: enum
+    enum:
+      - patch
+      - minor
+      - min
+      - major
+      - maj
+      - bug
+  branch:
+    description: Name of the branch to push after bumping. Usually "development" or "master:development".
+    type: string
+  attach_workspace:
+    description: Whether a workspace should be attached. Most of the time this should be true since we need code to act upon.
+    default: true
+    type: boolean
+  attach_workspace_at:
+    description: The directory to attach the workspace to.
+    default: /home/circleci
+    type: string
+  persist_workspace:
+    description: Whether to persist changes to the workspace.
+    default: true
+    type: boolean
+  compare_branch:
+    description: The other branch to compare the current branch's version with. This should most likely be "master".
+    default: master
+    type: string
+  comparison_predicate:
+    description: |
+      Perform the bump if the version in the current branch is << comparison_predicate >> the branch specified in the "compare_branch" parameter.
+      Provide an empty string (ie "") to bump the version without comparing versions.
+
+      See https://github.com/jceb/semver-compare-cli#comparison-with-predicate for details.
+    type: enum
+    default: ""
+    enum:
+      - ""
+      - eq
+      - ge
+      - gt
+      - le
+      - lt
+  ignore_comparison_failure:
+    type: boolean
+    default: true
+    description: If true, do not fail the pipeline if the version comparison fails.
+
+docker:
+  - image: cimg/python:3.8-node
+resource_class: carejourney/dev
+
+steps:
+  - when:
+      condition: << parameters.attach_workspace >>
+      steps:
+        - attach_workspace:
+            name: Restore environment
+            at: << parameters.attach_workspace_at >>
+  - git/configure
+  - bump-using-bumpversion:
+      segment: << parameters.segment >>
+      compare_branch: << parameters.compare_branch >>
+      comparison_predicate: << parameters.comparison_predicate >>
+      ignore_comparison_failure: << parameters.ignore_comparison_failure >>
+  - git/push:
+      branch: << parameters.branch >>
+  - git/commit-status
+  - when:
+      condition: << parameters.persist_workspace >>
+      steps:
+        - persist_to_workspace:
+            name: Save environment
+            root: << parameters.attach_workspace_at >>/
+            paths:
+              - project
+              - .npmrc

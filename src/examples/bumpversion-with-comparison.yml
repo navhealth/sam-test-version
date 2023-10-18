@@ -1,0 +1,23 @@
+description: >
+  How to use this orb to manage repos that use bumpversion to manage the version for a given repo.
+  This will bump the version **with** comparison of versions between the current branch and the master branch.
+  This will bump the version if the current branch is "eq" (ie equal) to the master branch.
+usage:
+  version: 2.1
+  orbs:
+    version: carejourney/versionv2@1
+
+  jobs:
+    bumpversion:
+      docker:
+        - image: cimg/python:3.8-node
+      steps:
+        - version/bump-using-bumpversion:
+            segment: patch
+            compare_branch: master
+            comparison_predicate: eq
+
+  workflows:
+    version-bump:
+      jobs:
+        - bumpversion
