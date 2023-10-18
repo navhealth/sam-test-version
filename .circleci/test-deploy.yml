@@ -516,6 +516,8 @@ workflows:
             tags:
               only:
                 - /.*/
+            branches:
+              ignore: /.*/
       # The orb must be re-packed for publishing, and saved to the workspace.
       - orb-tools/pack:
           filters: *release-filters
